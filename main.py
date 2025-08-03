@@ -38,7 +38,7 @@ def clear_conversation(chat_id: int):
     """Clear conversation history for a user"""
     user_conversations[chat_id] = []
 
-# --- SYSTEM PROMPTS (Same as your original) ---
+# --- SYSTEM PROMPTS ---
 def get_system_prompt(mode: str) -> str:
     """Get system prompt optimized for Phi-3's instruction format"""
     prompts = {
@@ -95,7 +95,7 @@ def build_phi3_prompt(user_input: str, mode: str, chat_id: int) -> str:
     
     return conversation
 
-# --- API COMMUNICATION WITH HUGGINGFACE SPACE ---
+# --- API COMMUNICATION WITH HUGGINGFACE INFERENCE API ---
 async def call_hf_space_api(prompt: str) -> str:
     """Call your HuggingFace Space API"""
     try:
@@ -106,7 +106,7 @@ async def call_hf_space_api(prompt: str) -> str:
             "data": [prompt, 80, 0.7]  # [text, max_length, temperature]
         }
         
-        timeout = aiohttp.ClientTimeout(total=60)  # 60 seconds for model loading
+        timeout = aiohttp.ClientTimeout(total=120)  # 2 minutes for model loading
         
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(api_endpoint, json=payload) as response:
@@ -122,10 +122,11 @@ async def call_hf_space_api(prompt: str) -> str:
                             logger.error(f"HF Space error: {result['error']}")
                             return None
                     
-                    logger.warning("Unexpected HF Space response format")
+                    logger.warning(f"Unexpected HF Space response format: {data}")
                     return None
                 else:
-                    logger.error(f"HF Space API returned status {response.status}")
+                    error_text = await response.text()
+                    logger.error(f"HF Space API returned status {response.status}: {error_text}")
                     return None
                     
     except asyncio.TimeoutError:
@@ -135,7 +136,7 @@ async def call_hf_space_api(prompt: str) -> str:
         logger.error(f"Error calling HF Space API: {e}")
         return None
 
-# --- RESPONSE VALIDATION (Same as your original) ---
+# --- RESPONSE VALIDATION ---
 def is_valid_phi3_response(response: str, user_input: str, mode: str) -> bool:
     """Validate Phi-3 response quality"""
     if not response:
@@ -276,30 +277,30 @@ def clean_phi3_response(response: str) -> str:
     
     return response.strip()
 
-# --- MAIN GENERATION FUNCTION (Modified for API) ---
+# --- MAIN GENERATION FUNCTION ---
 async def generate_phi3_reply(user_input: str, mode: str, chat_id: int) -> str:
-    """Generate reply using HuggingFace Space API"""
+    """Generate reply using HuggingFace Inference API"""
     try:
         # Build the same Phi-3 formatted prompt as before
         full_prompt = build_phi3_prompt(user_input, mode, chat_id)
         
-        logger.info(f"🔄 Sending prompt to HF Space: '{full_prompt[-100:]}...'")
+        logger.info(f"🔄 Sending prompt to HF API: '{full_prompt[-100:]}...'")
 
         # Call HF Space API instead of local model
         response = await call_hf_space_api(full_prompt)
         
         if response is None:
-            logger.warning("⚠️ HF Space API returned None - using fallback")
+            logger.warning("⚠️ HF API returned None - using fallback")
             response = get_contextual_fallback(mode, user_input)
         else:
-            logger.info(f"🤖 Raw HF Space output: '{response}'")
+            logger.info(f"🤖 Raw API output: '{response}'")
             
             # Clean the response
             response = clean_phi3_response(response)
             
             # Validate response quality
             if not is_valid_phi3_response(response, user_input, mode):
-                logger.info("⚠️ Invalid response from HF Space - using fallback")
+                logger.info("⚠️ Invalid response from API - using fallback")
                 response = get_contextual_fallback(mode, user_input)
         
         # Add to conversation history
@@ -312,7 +313,7 @@ async def generate_phi3_reply(user_input: str, mode: str, chat_id: int) -> str:
         logger.error(f"❌ Generation error: {e}")
         return get_contextual_fallback(mode, user_input)
 
-# --- Helper Functions (Same as original) ---
+# --- Helper Functions ---
 async def show_mode_selection(chat_id: int, context: ContextTypes.DEFAULT_TYPE, message_text: str = None):
     """Show mode selection buttons"""
     keyboard = [
@@ -336,7 +337,7 @@ async def show_mode_selection(chat_id: int, context: ContextTypes.DEFAULT_TYPE, 
         parse_mode='Markdown'
     )
 
-# --- Handlers (Same as original) ---
+# --- Handlers ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     user_modes[chat_id] = "mixed"
@@ -455,7 +456,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     
     await context.bot.send_chat_action(chat_id=chat_id, action='typing')
     
-    # Use HF Space API instead of local model
+    # Use HF Inference API
     reply = await generate_phi3_reply(user_input, mode, chat_id)
     
     logger.info(f"🤖 Bot ({chat_id}) replied: {reply}")
@@ -470,7 +471,7 @@ def main() -> None:
         logger.error("❌ BOT_TOKEN environment variable not set!")
         return
     
-    if not HF_SPACE_URL:
+            if not HF_SPACE_URL:
         logger.error("❌ HF_SPACE_URL environment variable not set!")
         return
     

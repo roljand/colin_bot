@@ -8,7 +8,6 @@ from flask import Flask, request, jsonify
 from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import asyncio
-import threading
 
 # Configure logging
 logging.basicConfig(
@@ -56,195 +55,151 @@ def update_user_context(user_id, message):
     context = get_user_context(user_id)
     context.conversation_count += 1
     context.last_active = datetime.now()
-    
-    # Simple interest detection
-    interests_keywords = {
-        'sports': ['football', 'soccer', 'basketball', 'tennis', 'gym', 'workout'],
-        'movies': ['movie', 'film', 'cinema', 'actor', 'actress', 'director'],
-        'music': ['song', 'music', 'band', 'singer', 'concert', 'album'],
-        'travel': ['travel', 'trip', 'vacation', 'country', 'city', 'visit'],
-        'food': ['food', 'restaurant', 'cook', 'recipe', 'eat', 'meal'],
-        'technology': ['computer', 'phone', 'internet', 'app', 'software']
-    }
-    
-    message_lower = message.lower()
-    for interest, keywords in interests_keywords.items():
-        if any(keyword in message_lower for keyword in keywords):
-            if interest not in context.interests:
-                context.interests.append(interest)
 
-def call_hf_space_api(prompt, max_length=150, temperature=0.7):
-    """Call HuggingFace Space API with proper error handling and debugging"""
+def call_hf_space_api(prompt):
+    """Call HuggingFace Space API with extensive debugging"""
     
-    hf_space_url = HF_SPACE_URL
+    logger.info(f"🚀 === HF API Call Debug Info ===")
+    logger.info(f"📝 Prompt: '{prompt}'")
+    logger.info(f"🔗 HF_SPACE_URL: {HF_SPACE_URL}")
     
-    logger.info(f"=== HF API Call Debug Info ===")
-    logger.info(f"HF_SPACE_URL: {hf_space_url}")
-    logger.info(f"Prompt: {prompt[:50]}...")
-    logger.info(f"Max length: {max_length}, Temperature: {temperature}")
-    
-    if not hf_space_url:
-        logger.error("HF_SPACE_URL environment variable not set!")
+    if not HF_SPACE_URL:
+        logger.error("❌ HF_SPACE_URL environment variable not set!")
         return None
     
-    # Construct the API endpoint
-    api_endpoint = f"{hf_space_url.rstrip('/')}/api/predict"
-    logger.info(f"API Endpoint: {api_endpoint}")
-    
-    try:
-        # Prepare the payload in the format Gradio expects
-        payload = {
-            "data": [
-                prompt,           # First input: prompt
-                max_length,       # Second input: max_length  
-                temperature       # Third input: temperature
-            ]
-        }
-        
-        logger.info(f"Payload: {json.dumps(payload, indent=2)}")
-        
-        # Make the request with proper headers and timeout
-        headers = {
-            'Content-Type': 'application/json',
-            'User-Agent': 'Colin-Bot/1.0'
-        }
-        
-        logger.info(f"Making request to {api_endpoint}...")
-        
-        response = requests.post(
-            api_endpoint,
-            json=payload,
-            headers=headers,
-            timeout=30  # 30 second timeout
-        )
-        
-        logger.info(f"Response status: {response.status_code}")
-        logger.info(f"Response headers: {dict(response.headers)}")
-        
-        if response.status_code == 200:
-            try:
-                result = response.json()
-                logger.info(f"Raw API response: {json.dumps(result, indent=2)}")
-                
-                # Extract the response from Gradio format
-                if 'data' in result and len(result['data']) > 0:
-                    generated_text = result['data'][0]
-                    logger.info(f"Extracted text: {generated_text}")
-                    return generated_text
-                else:
-                    logger.error(f"Unexpected response format: {result}")
-                    return None
-                    
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse JSON response: {e}")
-                logger.error(f"Raw response: {response.text}")
-                return None
-                
-        else:
-            logger.error(f"API request failed with status {response.status_code}")
-            logger.error(f"Response text: {response.text}")
-            return None
-            
-    except requests.exceptions.Timeout:
-        logger.error("Request timed out after 30 seconds")
-        return None
-        
-    except requests.exceptions.ConnectionError as e:
-        logger.error(f"Connection error: {e}")
-        return None
-        
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Request exception: {e}")
-        return None
-        
-    except Exception as e:
-        logger.error(f"Unexpected error in API call: {e}")
-        return None
-
-def get_contextual_fallback(message_text, user_context):
-    """Generate contextual fallback responses"""
-    message_lower = message_text.lower()
-    
-    # Greeting responses
-    if any(word in message_lower for word in ['hello', 'hi', 'hey', 'good morning', 'good afternoon']):
-        greetings = [
-            "Hi there! 😊 What would you like to talk about?",
-            "Hello! I'm excited to help you practice English today! 🌟",
-            "Hey! 🌟 How can I help you practice English?",
-            "Good to see you! Let's have a great English conversation! ✨"
-        ]
-        return random.choice(greetings)
-    
-    # Help requests
-    if any(word in message_lower for word in ['help', 'assist', 'support']):
-        help_responses = [
-            "I'm here to help! We can practice conversation, work on grammar, or discuss any topic you like! 💪",
-            "Of course! I can help you with speaking practice, grammar questions, or just casual conversation! 🎯",
-            "I'd love to help you improve your English! What would you like to work on? 📚"
-        ]
-        return random.choice(help_responses)
-    
-    # Grammar/learning requests
-    if any(word in message_lower for word in ['grammar', 'learn', 'study', 'practice']):
-        grammar_responses = [
-            "Grammar practice is great! Feel free to write sentences and I'll help you improve them! ✍️",
-            "Let's work on your English together! Try writing about something you enjoy! 📝",
-            "Perfect! The best way to learn is through practice. Tell me about your day! 🗣️"
-        ]
-        return random.choice(grammar_responses)
-    
-    # Questions about topics
-    if '?' in message_text:
-        question_responses = [
-            "That's a great question! Let me think about that... 🤔",
-            "Interesting question! I'd love to discuss that with you! 💭",
-            "Good question! What are your thoughts on this? 🎯"
-        ]
-        return random.choice(question_responses)
-    
-    # General encouragement based on user context
-    if user_context.conversation_count > 10:
-        advanced_responses = [
-            "Your English is really improving! I can see your progress! 📈",
-            "You're becoming more confident with English! Keep it up! 🚀",
-            "I'm impressed by your English skills! Let's keep practicing! ⭐"
-        ]
-        return random.choice(advanced_responses)
-    
-    # Default responses
-    general_responses = [
-        "That's interesting! Tell me more about that! 🗨️",
-        "I'd love to hear more about your thoughts on this! 💬",
-        "That's well expressed! 👌",
-        "You're communicating clearly! 🎯",
-        "Great! What else would you like to discuss? 🌟",
-        "That's a good way to put it! What do you think about...? 💭",
-        "I enjoy our conversation! What's on your mind? 😊"
+    # Try multiple API endpoints that might work with Gradio
+    api_endpoints = [
+        f"{HF_SPACE_URL.rstrip('/')}/api/predict",
+        f"{HF_SPACE_URL.rstrip('/')}/run/predict",
+        f"{HF_SPACE_URL.rstrip('/')}/call/predict"
     ]
     
-    return random.choice(general_responses)
-
-def generate_phi3_reply(message_text, user_context):
-    """Generate reply using HF Space API with fallback"""
+    for endpoint in api_endpoints:
+        logger.info(f"🎯 Trying endpoint: {endpoint}")
+        
+        try:
+            # Try different payload formats that Gradio might accept
+            payloads = [
+                {"data": [prompt]},  # Simple format
+                {"data": [prompt, 150, 0.7]},  # With parameters
+                {"inputs": prompt},  # Alternative format
+                {"prompt": prompt, "max_length": 150, "temperature": 0.7}  # Direct format
+            ]
+            
+            for i, payload in enumerate(payloads):
+                logger.info(f"📦 Trying payload format {i+1}: {payload}")
+                
+                headers = {
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'Colin-Bot/1.0'
+                }
+                
+                response = requests.post(
+                    endpoint,
+                    json=payload,
+                    headers=headers,
+                    timeout=30
+                )
+                
+                logger.info(f"📊 Response status: {response.status_code}")
+                logger.info(f"📋 Response headers: {dict(response.headers)}")
+                
+                if response.status_code == 200:
+                    try:
+                        result = response.json()
+                        logger.info(f"✅ Raw API response: {json.dumps(result, indent=2)}")
+                        
+                        # Try to extract response from different possible formats
+                        possible_responses = [
+                            result.get('data', [None])[0] if 'data' in result else None,
+                            result.get('output'),
+                            result.get('generated_text'),
+                            result.get('response'),
+                            result if isinstance(result, str) else None
+                        ]
+                        
+                        for response_text in possible_responses:
+                            if response_text and isinstance(response_text, str) and len(response_text.strip()) > 0:
+                                logger.info(f"🎉 SUCCESS! Extracted response: {response_text}")
+                                return response_text.strip()
+                        
+                    except json.JSONDecodeError as e:
+                        # Maybe it's plain text response?
+                        if len(response.text.strip()) > 0:
+                            logger.info(f"📄 Plain text response: {response.text}")
+                            return response.text.strip()
+                        else:
+                            logger.error(f"💥 JSON decode error: {e}")
+                
+                elif response.status_code == 404:
+                    logger.warning(f"⚠️ Endpoint not found: {endpoint}")
+                    break  # Try next endpoint
+                else:
+                    logger.error(f"❌ HTTP {response.status_code}: {response.text[:200]}...")
+                    
+        except requests.exceptions.Timeout:
+            logger.error(f"⏰ Timeout for endpoint: {endpoint}")
+            continue
+            
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"🔌 Connection error for {endpoint}: {e}")
+            continue
+            
+        except Exception as e:
+            logger.error(f"💥 Unexpected error for {endpoint}: {e}")
+            continue
     
-    logger.info(f"=== Generating reply for: {message_text[:50]}... ===")
+    logger.error("😞 All API attempts failed")
+    return None
+
+def get_emergency_fallback(message_text, user_context):
+    """Emergency fallback when API completely fails"""
+    message_lower = message_text.lower()
+    
+    # Try to give somewhat intelligent responses based on keywords
+    if any(word in message_lower for word in ['hello', 'hi', 'hey']):
+        return "Hello! I'm Colin, your English tutor. I'd love to help you practice English today! What would you like to talk about?"
+    
+    if any(word in message_lower for word in ['how', 'what', 'where', 'when', 'why', 'who']):
+        return f"That's a great question! You asked: '{message_text}'. I think that shows good curiosity. Can you tell me more about what you're thinking?"
+    
+    if any(word in message_lower for word in ['cat', 'cats']):
+        return "Cats are wonderful pets! They're independent and playful. Do you have a cat? What's your cat like?"
+    
+    if any(word in message_lower for word in ['dog', 'dogs']):
+        return "Dogs are amazing companions! They're loyal and friendly. Tell me about your experience with dogs!"
+    
+    if any(word in message_lower for word in ['food', 'eat', 'hungry']):
+        return "Food is always an interesting topic! What's your favorite type of food? Can you describe a meal you really enjoyed?"
+    
+    if '?' in message_text:
+        return f"You asked a question about '{message_text}'. That's great for practicing English! Questions help us learn. What do you think the answer might be?"
+    
+    # Default intelligent response
+    return f"I understand you said: '{message_text}'. That's interesting! Can you tell me more details about that? I'd love to learn about your thoughts."
+
+def generate_ai_reply(message_text, user_context):
+    """Generate AI reply with HF API and smart fallback"""
+    
+    logger.info(f"🤖 Generating AI reply for: '{message_text}'")
     
     try:
-        # Call the HF Space API
-        api_response = call_hf_space_api(message_text, max_length=150, temperature=0.7)
+        # First try the HF Space API
+        api_response = call_hf_space_api(message_text)
         
-        if api_response and len(api_response.strip()) > 0:
-            logger.info(f"✅ API Success! Response: {api_response[:100]}...")
+        if api_response and len(api_response.strip()) > 5:
+            logger.info(f"✅ Using HF API response: {api_response[:100]}...")
             return api_response.strip()
         else:
-            logger.warning("❌ API returned empty/null response, using fallback")
+            logger.warning("⚠️ HF API failed or returned empty response, using intelligent fallback")
             
     except Exception as e:
-        logger.error(f"❌ Exception in generate_phi3_reply: {e}")
+        logger.error(f"💥 Exception in API call: {e}")
     
-    # Fallback to contextual response
-    logger.info("Using contextual fallback response")
-    return get_contextual_fallback(message_text, user_context)
+    # Use intelligent fallback
+    fallback_response = get_emergency_fallback(message_text, user_context)
+    logger.info(f"🆘 Using emergency fallback: {fallback_response[:50]}...")
+    return fallback_response
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command"""
@@ -252,7 +207,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_context = get_user_context(user_id)
     
     welcome_message = """
-🌟 Hello! I'm Colin, your English learning companion! 
+🌟 Hello! I'm Colin, your AI English learning companion! 
 
 I'm here to help you:
 📚 Practice English conversation
@@ -260,7 +215,7 @@ I'm here to help you:
 🗣️ Build confidence in speaking
 🌍 Learn about different topics
 
-Just start chatting with me in English! I'll help you learn naturally through conversation.
+Just start chatting with me in English! I'll respond naturally and help you learn.
 
 Type /help anytime for more information.
 """
@@ -270,7 +225,7 @@ Type /help anytime for more information.
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command"""
     help_message = """
-🤖 I'm Colin, your English teacher bot!
+🤖 I'm Colin, your AI English teacher bot!
 
 📝 Commands:
 • /start - Welcome message
@@ -280,7 +235,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 💬 How to use me:
 • Just chat with me in English!
-• Ask me questions about grammar
+• Ask me questions about anything
 • Tell me about your interests
 • Practice describing things
 • Don't worry about mistakes - I'm here to help!
@@ -308,8 +263,8 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id in user_contexts:
         old_context = user_contexts[user_id]
         user_contexts[user_id] = UserContext()
-        user_contexts[user_id].level = old_context.level  # Keep level
-        user_contexts[user_id].interests = old_context.interests  # Keep interests
+        user_contexts[user_id].level = old_context.level
+        user_contexts[user_id].interests = old_context.interests
     
     await update.message.reply_text(
         "✨ Conversation history cleared! 📚 Let's start fresh - send me a message to begin a new conversation! 🚀"
@@ -331,13 +286,13 @@ async def level_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"📊 Your current level: {user_context.level.capitalize()}\n\nTo change: /level [beginner/intermediate/advanced]")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle regular messages"""
+    """Handle regular messages with AI responses"""
     try:
         user_id = update.effective_user.id
         message_text = update.message.text
         user_name = update.effective_user.first_name or "Student"
         
-        logger.info(f"Received message from {user_name} (ID: {user_id}): {message_text[:50]}...")
+        logger.info(f"📨 Message from {user_name} (ID: {user_id}): '{message_text}'")
         
         # Get or create user context
         user_context = get_user_context(user_id)
@@ -360,8 +315,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(user_conversations[user_id]) > 20:
             user_conversations[user_id] = user_conversations[user_id][-10:]
         
-        # Generate response
-        reply = generate_phi3_reply(message_text, user_context)
+        # Generate AI response
+        reply = generate_ai_reply(message_text, user_context)
         
         # Add bot response to conversation history
         user_conversations[user_id].append({
@@ -373,10 +328,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Send reply
         await update.message.reply_text(reply)
         
-        logger.info(f"Sent reply to {user_name}: {reply[:50]}...")
+        logger.info(f"📤 Sent reply to {user_name}: '{reply[:100]}...'")
         
     except Exception as e:
-        logger.error(f"Error handling message: {e}")
+        logger.error(f"💥 Error handling message: {e}")
         await update.message.reply_text(
             "I'm having a small technical issue, but I'm still here to help you! 🤖 Try sending your message again!"
         )
@@ -387,7 +342,7 @@ def webhook():
     """Handle webhook updates"""
     try:
         json_data = request.get_json()
-        logger.info(f"📨 Webhook received: {json_data}")
+        logger.info(f"📨 Webhook received message")
         
         if json_data:
             update = Update.de_json(json_data, bot)
@@ -413,7 +368,7 @@ def webhook():
         return jsonify({"status": "ok"})
         
     except Exception as e:
-        logger.error(f"Webhook error: {e}")
+        logger.error(f"💥 Webhook error: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/health', methods=['GET'])
@@ -439,35 +394,38 @@ def home():
     })
 
 def setup_webhook():
-    """Set up webhook for the bot - FIXED VERSION"""
+    """Set up webhook using requests to avoid async issues"""
     if not WEBHOOK_HOST:
-        logger.warning("WEBHOOK_HOST not configured - webhook setup skipped")
+        logger.warning("⚠️ WEBHOOK_HOST not configured - webhook setup skipped")
         return
         
     try:
         webhook_url = f"{WEBHOOK_HOST}/webhook/{BOT_TOKEN}"
-        
-        # Set webhook using requests instead of bot.set_webhook() to avoid async issues
         telegram_api_url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
         
-        response = requests.post(telegram_api_url, json={'url': webhook_url})
+        logger.info(f"🔗 Setting webhook to: {webhook_url}")
+        
+        response = requests.post(telegram_api_url, json={'url': webhook_url}, timeout=10)
         
         if response.status_code == 200:
             result = response.json()
             if result.get('ok'):
-                logger.info(f"✅ Webhook successfully set to: {webhook_url}")
+                logger.info(f"✅ Webhook successfully set!")
             else:
                 logger.error(f"❌ Telegram API error: {result}")
         else:
-            logger.error(f"❌ Failed to set webhook. Status: {response.status_code}, Response: {response.text}")
+            logger.error(f"❌ Failed to set webhook. Status: {response.status_code}")
         
     except Exception as e:
-        logger.error(f"Failed to set webhook: {e}")
+        logger.error(f"💥 Failed to set webhook: {e}")
 
 if __name__ == "__main__":
+    logger.info("🚀 Starting Colin English Learning Bot...")
+    
     # Set up webhook
     setup_webhook()
     
     # Start Flask app
     port = int(os.environ.get('PORT', 8080))
+    logger.info(f"🌐 Starting Flask server on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False)

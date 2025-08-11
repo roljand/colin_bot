@@ -387,6 +387,7 @@ def webhook():
     """Handle webhook updates"""
     try:
         json_data = request.get_json()
+        logger.info(f"📨 Webhook received: {json_data}")
         
         if json_data:
             update = Update.de_json(json_data, bot)
@@ -438,7 +439,7 @@ def home():
     })
 
 def setup_webhook():
-    """Set up webhook for the bot"""
+    """Set up webhook for the bot - FIXED VERSION"""
     if not WEBHOOK_HOST:
         logger.warning("WEBHOOK_HOST not configured - webhook setup skipped")
         return
@@ -452,9 +453,13 @@ def setup_webhook():
         response = requests.post(telegram_api_url, json={'url': webhook_url})
         
         if response.status_code == 200:
-            logger.info(f"✅ Webhook successfully set to: {webhook_url}")
+            result = response.json()
+            if result.get('ok'):
+                logger.info(f"✅ Webhook successfully set to: {webhook_url}")
+            else:
+                logger.error(f"❌ Telegram API error: {result}")
         else:
-            logger.error(f"❌ Failed to set webhook: {response.text}")
+            logger.error(f"❌ Failed to set webhook. Status: {response.status_code}, Response: {response.text}")
         
     except Exception as e:
         logger.error(f"Failed to set webhook: {e}")
@@ -464,5 +469,5 @@ if __name__ == "__main__":
     setup_webhook()
     
     # Start Flask app
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False)

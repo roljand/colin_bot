@@ -446,9 +446,15 @@ def setup_webhook():
     try:
         webhook_url = f"{WEBHOOK_HOST}/webhook/{BOT_TOKEN}"
         
-        # Set webhook
-        bot.set_webhook(webhook_url)
-        logger.info(f"Webhook set to: {webhook_url}")
+        # Set webhook using requests instead of bot.set_webhook() to avoid async issues
+        telegram_api_url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
+        
+        response = requests.post(telegram_api_url, json={'url': webhook_url})
+        
+        if response.status_code == 200:
+            logger.info(f"✅ Webhook successfully set to: {webhook_url}")
+        else:
+            logger.error(f"❌ Failed to set webhook: {response.text}")
         
     except Exception as e:
         logger.error(f"Failed to set webhook: {e}")

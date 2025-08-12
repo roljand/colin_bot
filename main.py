@@ -1,11 +1,8 @@
 import os
 import logging
-import asyncio
-import threading
 from flask import Flask, request, jsonify
 import requests
-from telegram import Bot, Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram import Bot
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -18,11 +15,9 @@ PORT = int(os.getenv('PORT', 8080))
 HF_SPACE_URL = "https://roljand-colin-bot.hf.space"
 HF_API_TOKEN = os.getenv('HF_TOKEN', '')
 
-# Initialize Flask app
+# Initialize Flask app and Bot
 app = Flask(__name__)
-
-# Global application instance
-application = None
+bot = Bot(BOT_TOKEN)
 
 class ColinBot:
     def __init__(self):
@@ -31,7 +26,7 @@ class ColinBot:
         self.logger = logging.getLogger(__name__)
         
     def call_huggingface_api(self, user_message):
-        """Call HuggingFace Space API with extensive debugging - SYNCHRONOUS VERSION"""
+        """Call HuggingFace Space API with extensive debugging"""
         self.logger.info(f"🚀 === HF API Call Debug Info ===")
         self.logger.info(f"📝 User message: {user_message}")
         self.logger.info(f"🌐 HF Space URL: {self.hf_space_url}")
@@ -79,27 +74,36 @@ class ColinBot:
                     )
                     
                     self.logger.info(f"📊 Status: {response.status_code}")
-                    self.logger.info(f"📋 Headers: {dict(response.headers)}")
+                    self.logger.info(f"📋 Response headers: {dict(response.headers)}")
                     
                     if response.status_code == 200:
                         result = response.json()
-                        self.logger.info(f"✅ Success! Response: {result}")
+                        self.logger.info(f"✅ Success! Full response: {result}")
                         
                         # Try to extract text from different response formats
                         if isinstance(result, dict):
                             if 'data' in result and isinstance(result['data'], list):
-                                return result['data'][0] if result['data'] else "No response"
+                                if result['data']:
+                                    extracted = result['data'][0]
+                                    self.logger.info(f"📄 Extracted from 'data': {extracted}")
+                                    return str(extracted)
                             elif 'output' in result:
+                                self.logger.info(f"📄 Extracted from 'output': {result['output']}")
                                 return str(result['output'])
                             elif 'generated_text' in result:
+                                self.logger.info(f"📄 Extracted from 'generated_text': {result['generated_text']}")
                                 return result['generated_text']
                             elif 'response' in result:
+                                self.logger.info(f"📄 Extracted from 'response': {result['response']}")
                                 return result['response']
                         elif isinstance(result, list) and result:
+                            self.logger.info(f"📄 Extracted from list: {result[0]}")
                             return str(result[0])
                         elif isinstance(result, str):
+                            self.logger.info(f"📄 Direct string response: {result}")
                             return result
                             
+                        self.logger.info(f"📄 Fallback - converting to string: {result}")
                         return str(result)
                     else:
                         response_text = response.text[:500]
@@ -126,16 +130,70 @@ class ColinBot:
             return "I'm Colin, your AI assistant! I can help with questions, conversations, and various tasks. I'm currently experiencing some connectivity issues, but feel free to ask me anything!"
         elif any(farewell in message_lower for farewell in ['bye', 'goodbye', 'see you', 'farewell']):
             return "Goodbye! Have a great day! 👋"
+        elif 'when' in message_lower:
+            return "That's a great question about timing! I'm currently working on reconnecting to my full capabilities to give you better answers."
         else:
             return f"I hear you saying: '{user_message}'. I'm currently having trouble connecting to my full AI capabilities, but I'm working on fixing this issue!"
 
 # Initialize bot instance
 colin_bot = ColinBot()
 
-async def start_command(update: Update, context):
-    """Handle /start command"""
-    welcome_message = """
-🤖 Hello! I'm Colin, your AI assistant!
+def send_message(chat_id, text):
+    """Send message via Telegram API directly"""
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML"
+        }
+        
+        response = requests.post(url, json=payload, timeout=10)
+        
+        if response.status_code == 200:
+            logger.info(f"✅ Message sent successfully to {chat_id}")
+            return True
+        else:
+            logger.error(f"❌ Failed to send message: {response.status_code} - {response.text}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"🚨 Error sending message: {str(e)}")
+        return False
+
+def send_typing_action(chat_id):
+    """Send typing action via Telegram API"""
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendChatAction"
+        payload = {
+            "chat_id": chat_id,
+            "action": "typing"
+        }
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        logger.error(f"🚨 Error sending typing action: {str(e)}")
+
+# Flask webhook endpoint
+@app.route(f'/{BOT_TOKEN}', methods=['POST'])
+def webhook():
+    """Handle incoming webhooks from Telegram - SIMPLE VERSION"""
+    try:
+        json_data = request.get_json(force=True)
+        logger.info(f"📨 Received webhook data: {json_data}")
+        
+        # Extract message data
+        if 'message' in json_data:
+            message = json_data['message']
+            chat_id = message['chat']['id']
+            user_name = message['from'].get('first_name', 'User')
+            
+            if 'text' in message:
+                user_message = message['text']
+                logger.info(f"💬 Message from {user_name}: {user_message}")
+                
+                # Handle commands
+                if user_message.startswith('/start'):
+                    welcome_message = """🤖 Hello! I'm Colin, your AI assistant!
 
 I can help you with:
 • Answering questions
@@ -143,14 +201,11 @@ I can help you with:
 • Providing information
 • And much more!
 
-Just send me a message and I'll respond. Let's chat!
-    """
-    await update.message.reply_text(welcome_message)
-
-async def help_command(update: Update, context):
-    """Handle /help command"""
-    help_message = """
-🆘 Colin Bot Help
+Just send me a message and I'll respond. Let's chat!"""
+                    send_message(chat_id, welcome_message)
+                    
+                elif user_message.startswith('/help'):
+                    help_message = """🆘 Colin Bot Help
 
 Commands:
 • /start - Start the bot
@@ -158,71 +213,28 @@ Commands:
 
 Just send me any message and I'll respond! I'm powered by AI and ready to chat.
 
-Having issues? The bot is constantly being improved!
-    """
-    await update.message.reply_text(help_message)
-
-async def handle_message(update: Update, context):
-    """Handle regular messages"""
-    user_message = update.message.text
-    user_name = update.effective_user.first_name
-    
-    logger.info(f"💬 Message from {user_name}: {user_message}")
-    
-    try:
-        # Show typing indicator
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-        
-        # Get AI response (synchronous call)
-        ai_response = colin_bot.call_huggingface_api(user_message)
-        
-        logger.info(f"🤖 Colin's response: {ai_response}")
-        
-        # Send response
-        await update.message.reply_text(ai_response)
-        
-    except Exception as e:
-        logger.error(f"🚨 Error in handle_message: {str(e)}")
-        await update.message.reply_text(
-            "Sorry, I'm experiencing technical difficulties right now. Please try again in a moment! 🔧"
-        )
-
-def process_telegram_update(json_data):
-    """Process Telegram update in a separate thread"""
-    def run_update():
-        try:
-            # Create new event loop for this thread
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            # Parse the update
-            update = Update.de_json(json_data, application.bot)
-            logger.info(f"📨 Processing update from {update.effective_user.first_name if update.effective_user else 'Unknown'}")
-            
-            # Process the update
-            loop.run_until_complete(application.process_update(update))
-            
-        except Exception as e:
-            logger.error(f"🚨 Error processing update: {str(e)}")
-        finally:
-            loop.close()
-    
-    # Run in background thread
-    thread = threading.Thread(target=run_update, daemon=True)
-    thread.start()
-
-# Flask webhook endpoint
-@app.route(f'/{BOT_TOKEN}', methods=['POST'])
-def webhook():
-    """Handle incoming webhooks from Telegram"""
-    try:
-        json_data = request.get_json(force=True)
-        logger.info(f"📨 Received webhook data: {json_data}")
-        
-        # Process update in background thread
-        process_telegram_update(json_data)
+Having issues? The bot is constantly being improved!"""
+                    send_message(chat_id, help_message)
+                    
+                else:
+                    # Handle regular messages
+                    try:
+                        # Send typing indicator
+                        send_typing_action(chat_id)
+                        
+                        # Get AI response
+                        ai_response = colin_bot.call_huggingface_api(user_message)
+                        logger.info(f"🤖 Colin's response: {ai_response}")
+                        
+                        # Send response
+                        send_message(chat_id, ai_response)
+                        
+                    except Exception as e:
+                        logger.error(f"🚨 Error processing message: {str(e)}")
+                        send_message(chat_id, "Sorry, I'm experiencing technical difficulties right now. Please try again in a moment! 🔧")
         
         return jsonify({"status": "ok"})
+        
     except Exception as e:
         logger.error(f"🚨 Webhook error: {str(e)}")
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -233,7 +245,7 @@ def index():
     return jsonify({
         "status": "active",
         "bot": "ColinBot",
-        "version": "2.1",
+        "version": "3.0-SIMPLE",
         "hf_space": HF_SPACE_URL
     })
 
@@ -270,26 +282,15 @@ def setup_webhook():
         return False
 
 if __name__ == '__main__':
-    logger.info(f"🤖 Starting ColinBot with HF Space: {HF_SPACE_URL}")
+    logger.info(f"🤖 Starting ColinBot SIMPLE VERSION")
+    logger.info(f"🌐 HF Space: {HF_SPACE_URL}")
+    logger.info(f"🔗 Webhook URL: {WEBHOOK_URL}")
     
-    # Create application
-    application = Application.builder().token(BOT_TOKEN).build()
-    
-    # Add handlers
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    # Initialize the application
-    asyncio.run(application.initialize())
-    
-    # Setup webhook if WEBHOOK_URL is provided, otherwise use polling
     if WEBHOOK_URL:
-        logger.info(f"🌐 Using WEBHOOK mode with URL: {WEBHOOK_URL}")
+        logger.info(f"🌐 Using WEBHOOK mode")
         setup_webhook()
         
         # Run Flask app
         app.run(host='0.0.0.0', port=PORT, debug=False)
     else:
-        logger.info("🔄 Using POLLING mode (for local development)")
-        application.run_polling()
+        logger.error("❌ No WEBHOOK_URL provided - cannot run in webhook mode")

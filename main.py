@@ -1,5 +1,7 @@
 import os
 import logging
+import asyncio
+import threading
 from flask import Flask, request, jsonify
 import requests
 from telegram import Bot, Update
@@ -19,8 +21,8 @@ HF_API_TOKEN = os.getenv('HF_TOKEN', '')
 # Initialize Flask app
 app = Flask(__name__)
 
-# Initialize bot
-bot = Bot(BOT_TOKEN)
+# Global application instance
+application = None
 
 class ColinBot:
     def __init__(self):
@@ -28,8 +30,8 @@ class ColinBot:
         self.hf_api_token = HF_API_TOKEN
         self.logger = logging.getLogger(__name__)
         
-    async def call_huggingface_api(self, user_message):
-        """Call HuggingFace Space API with extensive debugging"""
+    def call_huggingface_api(self, user_message):
+        """Call HuggingFace Space API with extensive debugging - SYNCHRONOUS VERSION"""
         self.logger.info(f"🚀 === HF API Call Debug Info ===")
         self.logger.info(f"📝 User message: {user_message}")
         self.logger.info(f"🌐 HF Space URL: {self.hf_space_url}")
@@ -69,7 +71,6 @@ class ColinBot:
                     self.logger.info(f"🔄 Attempt {i+1}.{j+1}: {endpoint}")
                     self.logger.info(f"📦 Payload: {payload}")
                     
-                    # Use requests.post instead of async
                     response = requests.post(
                         endpoint,
                         json=payload,
@@ -172,8 +173,8 @@ async def handle_message(update: Update, context):
         # Show typing indicator
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
         
-        # Get AI response
-        ai_response = await colin_bot.call_huggingface_api(user_message)
+        # Get AI response (synchronous call)
+        ai_response = colin_bot.call_huggingface_api(user_message)
         
         logger.info(f"🤖 Colin's response: {ai_response}")
         
@@ -186,16 +187,40 @@ async def handle_message(update: Update, context):
             "Sorry, I'm experiencing technical difficulties right now. Please try again in a moment! 🔧"
         )
 
+def process_telegram_update(json_data):
+    """Process Telegram update in a separate thread"""
+    def run_update():
+        try:
+            # Create new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Parse the update
+            update = Update.de_json(json_data, application.bot)
+            logger.info(f"📨 Processing update from {update.effective_user.first_name if update.effective_user else 'Unknown'}")
+            
+            # Process the update
+            loop.run_until_complete(application.process_update(update))
+            
+        except Exception as e:
+            logger.error(f"🚨 Error processing update: {str(e)}")
+        finally:
+            loop.close()
+    
+    # Run in background thread
+    thread = threading.Thread(target=run_update, daemon=True)
+    thread.start()
+
 # Flask webhook endpoint
 @app.route(f'/{BOT_TOKEN}', methods=['POST'])
 def webhook():
     """Handle incoming webhooks from Telegram"""
     try:
         json_data = request.get_json(force=True)
-        update = Update.de_json(json_data, bot)
+        logger.info(f"📨 Received webhook data: {json_data}")
         
-        # Process the update
-        application.process_update(update)
+        # Process update in background thread
+        process_telegram_update(json_data)
         
         return jsonify({"status": "ok"})
     except Exception as e:
@@ -208,14 +233,14 @@ def index():
     return jsonify({
         "status": "active",
         "bot": "ColinBot",
-        "version": "2.0",
+        "version": "2.1",
         "hf_space": HF_SPACE_URL
     })
 
 @app.route('/health')
 def health():
     """Health check"""
-    return jsonify({"status": "healthy", "timestamp": str(os.times())})
+    return jsonify({"status": "healthy"})
 
 def setup_webhook():
     """Setup webhook with Telegram"""
@@ -254,6 +279,9 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Initialize the application
+    asyncio.run(application.initialize())
     
     # Setup webhook if WEBHOOK_URL is provided, otherwise use polling
     if WEBHOOK_URL:

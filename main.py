@@ -59,8 +59,77 @@ class ColinBot:
         else:
             self.logger.info("⚠️  No HF API token provided")
         
-        # Try different combinations
-        for i, endpoint in enumerate(endpoints):
+        # Try only the most likely endpoints first (faster)
+        priority_endpoints = [
+            f"{self.hf_space_url}/api/predict",
+            f"{self.hf_space_url}/predict"
+        ]
+        
+        # Try priority endpoints first with shorter timeout
+        for i, endpoint in enumerate(priority_endpoints):
+            for j, payload in enumerate(payloads[:2]):  # Only try first 2 payload formats
+                try:
+                    self.logger.info(f"🔄 Priority attempt {i+1}.{j+1}: {endpoint}")
+                    self.logger.info(f"📦 Payload: {payload}")
+                    
+                    response = requests.post(
+                        endpoint,
+                        json=payload,
+                        headers=headers,
+                        timeout=8  # Even shorter for priority attempts
+                    )
+                    
+                    self.logger.info(f"📊 Status: {response.status_code}")
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        self.logger.info(f"✅ Success! Full response: {result}")
+                        
+                        # Try to extract text from different response formats
+                        if isinstance(result, dict):
+                            if 'data' in result and isinstance(result['data'], list):
+                                if result['data']:
+                                    extracted = result['data'][0]
+                                    self.logger.info(f"📄 Extracted from 'data': {extracted}")
+                                    return str(extracted)
+                            elif 'output' in result:
+                                self.logger.info(f"📄 Extracted from 'output': {result['output']}")
+                                return str(result['output'])
+                            elif 'generated_text' in result:
+                                self.logger.info(f"📄 Extracted from 'generated_text': {result['generated_text']}")
+                                return result['generated_text']
+                            elif 'response' in result:
+                                self.logger.info(f"📄 Extracted from 'response': {result['response']}")
+                                return result['response']
+                        elif isinstance(result, list) and result:
+                            self.logger.info(f"📄 Extracted from list: {result[0]}")
+                            return str(result[0])
+                        elif isinstance(result, str):
+                            self.logger.info(f"📄 Direct string response: {result}")
+                            return result
+                            
+                        self.logger.info(f"📄 Fallback - converting to string: {result}")
+                        return str(result)
+                    
+                except requests.exceptions.RequestException as e:
+                    self.logger.error(f"🚨 Priority request error: {str(e)}")
+                    continue
+        
+        self.logger.warning("⚡ Priority endpoints failed, trying fallback...")
+        
+        # If priority endpoints fail, try remaining endpoints quickly
+        for i, endpoint in enumerate(fallback_endpoints):
+            for j, payload in enumerate(payloads[2:]):  # Try remaining payload formats
+                try:
+                    self.logger.info(f"🔄 Fallback attempt {i+1}.{j+1}: {endpoint}")
+                    self.logger.info(f"📦 Payload: {payload}")
+                    
+                    response = requests.post(
+                        endpoint,
+                        json=payload,
+                        headers=headers,
+                        timeout=5  # Very short timeout for fallbacks
+                    )
             for j, payload in enumerate(payloads):
                 try:
                     self.logger.info(f"🔄 Attempt {i+1}.{j+1}: {endpoint}")
@@ -70,7 +139,7 @@ class ColinBot:
                         endpoint,
                         json=payload,
                         headers=headers,
-                        timeout=30
+                        timeout=10  # Reduced timeout to prevent Telegram duplicates
                     )
                     
                     self.logger.info(f"📊 Status: {response.status_code}")

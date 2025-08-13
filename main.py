@@ -35,52 +35,72 @@ def initialize_gradio_client():
         gradio_client = None
         return False
 
-def get_ai_response(message):
+def get_ai_response(user_message):
     """Get response from HuggingFace Space using Gradio Client"""
     global gradio_client
     
     # Try to initialize client if not already done
     if gradio_client is None:
         if not initialize_gradio_client():
-            return get_fallback_response(message)
+            return get_fallback_response(user_message)
     
     try:
         logger.info(f"🚀 === HF Gradio Call Debug Info ===")
-        logger.info(f"📝 User message: {message}")
+        logger.info(f"📝 User message: {user_message}")
         logger.info(f"🌐 HF Space URL: {HF_SPACE_URL}")
         
-        # Make the API call using Gradio client
-        logger.info("🔄 Calling Gradio predict...")
+        # Determine appropriate parameters
+        max_length = 150
+        temperature = 0.7
+        
+        # Adjust parameters based on message type
+        message_lower = user_message.lower().strip()
+        if any(word in message_lower for word in ['explain', 'how', 'why', 'what', 'help me understand']):
+            max_length = 200
+            temperature = 0.8
+        elif any(word in message_lower for word in ['hi', 'hello', 'hey', '/start', '/clear']):
+            max_length = 100
+            temperature = 0.6
+        elif any(word in message_lower for word in ['practice', 'conversation', 'chat', 'talk']):
+            max_length = 180
+            temperature = 0.9
+        
+        logger.info(f"🎛️ Using parameters: max_length={max_length}, temperature={temperature}")
+        logger.info("🔄 Calling Gradio predict with positional arguments...")
+        
+        # Call with only positional arguments - no keywords!
         result = gradio_client.predict(
-            message=message,
-            api_name="/chat"  # This should match your Gradio interface
+            user_message,  # First argument: prompt
+            max_length,    # Second argument: max_length
+            temperature    # Third argument: temperature
         )
         
         logger.info(f"✅ HF Response received: {result}")
         
-        # Handle different response formats
+        # Handle the response
         if isinstance(result, str):
-            response = result
-        elif isinstance(result, list) and len(result) > 0:
-            response = result[0] if isinstance(result[0], str) else str(result[0])
-        elif isinstance(result, dict):
-            response = result.get('output', str(result))
+            response = result.strip()
         else:
-            response = str(result)
+            logger.warning(f"⚠️ Unexpected response type: {type(result)}")
+            response = str(result).strip()
             
-        # Clean up the response
-        response = response.strip()
-        if not response:
-            logger.warning("⚠️ Empty response from HF Space")
-            return get_fallback_response(message)
+        # Validate response
+        if not response or len(response) < 3:
+            logger.warning("⚠️ Empty or too short response from HF Space")
+            return get_fallback_response(user_message)
+            
+        # Check for error responses
+        if response.startswith('❌') or 'Error:' in response:
+            logger.warning(f"⚠️ Error response from HF Space: {response}")
+            return get_fallback_response(user_message)
             
         return response
         
     except Exception as e:
         logger.error(f"❌ HF Space error: {e}")
-        # Try to reinitialize client for next time
+        # Reset client for retry
         gradio_client = None
-        return get_fallback_response(message)
+        return get_fallback_response(user_message)
 
 def get_fallback_response(message):
     """Smart contextual fallback responses"""
@@ -97,7 +117,7 @@ def get_fallback_response(message):
     
     # Question detection
     if any(word in message_lower for word in ['?', 'what', 'how', 'why', 'when', 'where', 'who']):
-        return f"That's an interesting question about '{message}'. I'm currently experiencing some technical difficulties with my AI connection, but I'm working on resolving this!"
+        return f"That's an interesting question! I'm currently experiencing some technical difficulties with my AI connection, but I'm working on resolving this!"
     
     # Greeting detection
     if any(word in message_lower for word in ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening']):
@@ -126,6 +146,16 @@ def send_telegram_message(chat_id, text):
     except Exception as e:
         logger.error(f"❌ Error sending message: {e}")
         return False
+
+@app.route('/', methods=['GET'])
+def root():
+    """Root endpoint"""
+    return jsonify({
+        'status': 'Colin English Bot is running!',
+        'bot_configured': bool(BOT_TOKEN),
+        'hf_space': HF_SPACE_URL,
+        'webhook_endpoint': f'/{BOT_TOKEN}' if BOT_TOKEN else 'Not configured'
+    }), 200
 
 @app.route(f'/{BOT_TOKEN}', methods=['POST'])
 def webhook():

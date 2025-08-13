@@ -26,27 +26,20 @@ class ColinBot:
         self.logger = logging.getLogger(__name__)
         
     def call_huggingface_api(self, user_message):
-        """Call HuggingFace Space API with extensive debugging"""
+        """Call HuggingFace Space API with optimized timeouts"""
         self.logger.info(f"🚀 === HF API Call Debug Info ===")
         self.logger.info(f"📝 User message: {user_message}")
         self.logger.info(f"🌐 HF Space URL: {self.hf_space_url}")
         
-        # API endpoints to try
-        endpoints = [
-            f"{self.hf_space_url}/api/predict",
-            f"{self.hf_space_url}/predict",
-            f"{self.hf_space_url}/api/generate",
-            f"{self.hf_space_url}/generate"
-        ]
-        
-        # Different payload formats to try
-        payloads = [
-            {"data": [user_message]},
-            {"inputs": user_message},
-            {"prompt": user_message},
-            {"text": user_message},
-            {"message": user_message}
-        ]
+        # Check if HF Space is reachable first
+        try:
+            ping_response = requests.get(self.hf_space_url, timeout=3)
+            if ping_response.status_code != 200:
+                self.logger.warning(f"⚠️ HF Space ping failed: {ping_response.status_code}")
+                return self._get_contextual_fallback(user_message)
+        except Exception as e:
+            self.logger.warning(f"⚠️ HF Space not reachable: {str(e)} - using fallback")
+            return self._get_contextual_fallback(user_message)
         
         headers = {
             'Content-Type': 'application/json',
@@ -59,134 +52,78 @@ class ColinBot:
         else:
             self.logger.info("⚠️  No HF API token provided")
         
-        # Try only the most likely endpoints first (faster)
-        priority_endpoints = [
-            f"{self.hf_space_url}/api/predict",
-            f"{self.hf_space_url}/predict"
+        # Try HF Space API with reduced timeouts to prevent Telegram duplicates
+        endpoints_to_try = [
+            (f"{self.hf_space_url}/api/predict", {"data": [user_message]}),
+            (f"{self.hf_space_url}/predict", {"inputs": user_message}),
+            (f"{self.hf_space_url}/api/generate", {"prompt": user_message}),
+            (f"{self.hf_space_url}/generate", {"text": user_message})
         ]
         
-        # Try priority endpoints first with shorter timeout
-        for i, endpoint in enumerate(priority_endpoints):
-            for j, payload in enumerate(payloads[:2]):  # Only try first 2 payload formats
-                try:
-                    self.logger.info(f"🔄 Priority attempt {i+1}.{j+1}: {endpoint}")
-                    self.logger.info(f"📦 Payload: {payload}")
+        for i, (endpoint, payload) in enumerate(endpoints_to_try):
+            try:
+                self.logger.info(f"🔄 Attempt {i+1}: {endpoint}")
+                self.logger.info(f"📦 Payload: {payload}")
+                
+                response = requests.post(
+                    endpoint,
+                    json=payload,
+                    headers=headers,
+                    timeout=8  # Reduced timeout to prevent Telegram duplicate messages
+                )
+                
+                self.logger.info(f"📊 Status: {response.status_code}")
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    self.logger.info(f"✅ Success! Response: {result}")
                     
-                    response = requests.post(
-                        endpoint,
-                        json=payload,
-                        headers=headers,
-                        timeout=8  # Even shorter for priority attempts
-                    )
+                    # Extract response text
+                    if isinstance(result, dict):
+                        if 'data' in result and isinstance(result['data'], list) and result['data']:
+                            extracted = str(result['data'][0])
+                            self.logger.info(f"📄 Extracted from 'data': {extracted}")
+                            return extracted
+                        elif 'output' in result:
+                            extracted = str(result['output'])
+                            self.logger.info(f"📄 Extracted from 'output': {extracted}")
+                            return extracted
+                        elif 'generated_text' in result:
+                            self.logger.info(f"📄 Extracted from 'generated_text': {result['generated_text']}")
+                            return result['generated_text']
+                        elif 'response' in result:
+                            self.logger.info(f"📄 Extracted from 'response': {result['response']}")
+                            return result['response']
+                    elif isinstance(result, list) and result:
+                        extracted = str(result[0])
+                        self.logger.info(f"📄 Extracted from list: {extracted}")
+                        return extracted
+                    elif isinstance(result, str):
+                        self.logger.info(f"📄 Direct string response: {result}")
+                        return result
                     
-                    self.logger.info(f"📊 Status: {response.status_code}")
+                    # Fallback - convert to string
+                    fallback_result = str(result)
+                    self.logger.info(f"📄 Fallback conversion: {fallback_result}")
+                    return fallback_result
                     
-                    if response.status_code == 200:
-                        result = response.json()
-                        self.logger.info(f"✅ Success! Full response: {result}")
-                        
-                        # Try to extract text from different response formats
-                        if isinstance(result, dict):
-                            if 'data' in result and isinstance(result['data'], list):
-                                if result['data']:
-                                    extracted = result['data'][0]
-                                    self.logger.info(f"📄 Extracted from 'data': {extracted}")
-                                    return str(extracted)
-                            elif 'output' in result:
-                                self.logger.info(f"📄 Extracted from 'output': {result['output']}")
-                                return str(result['output'])
-                            elif 'generated_text' in result:
-                                self.logger.info(f"📄 Extracted from 'generated_text': {result['generated_text']}")
-                                return result['generated_text']
-                            elif 'response' in result:
-                                self.logger.info(f"📄 Extracted from 'response': {result['response']}")
-                                return result['response']
-                        elif isinstance(result, list) and result:
-                            self.logger.info(f"📄 Extracted from list: {result[0]}")
-                            return str(result[0])
-                        elif isinstance(result, str):
-                            self.logger.info(f"📄 Direct string response: {result}")
-                            return result
-                            
-                        self.logger.info(f"📄 Fallback - converting to string: {result}")
-                        return str(result)
+                else:
+                    response_text = response.text[:200]
+                    self.logger.warning(f"❌ Failed: {response.status_code} - {response_text}")
                     
-                except requests.exceptions.RequestException as e:
-                    self.logger.error(f"🚨 Priority request error: {str(e)}")
-                    continue
+            except requests.exceptions.Timeout:
+                self.logger.warning(f"⏰ Timeout for {endpoint}")
+                continue
+            except Exception as e:
+                self.logger.error(f"🚨 Error for {endpoint}: {str(e)}")
+                continue
         
-        self.logger.warning("⚡ Priority endpoints failed, trying fallback...")
-        
-        # If priority endpoints fail, try remaining endpoints quickly
-        for i, endpoint in enumerate(fallback_endpoints):
-            for j, payload in enumerate(payloads[2:]):  # Try remaining payload formats
-                try:
-                    self.logger.info(f"🔄 Fallback attempt {i+1}.{j+1}: {endpoint}")
-                    self.logger.info(f"📦 Payload: {payload}")
-                    
-                    response = requests.post(
-                        endpoint,
-                        json=payload,
-                        headers=headers,
-                        timeout=5  # Very short timeout for fallbacks
-                    )
-            for j, payload in enumerate(payloads):
-                try:
-                    self.logger.info(f"🔄 Attempt {i+1}.{j+1}: {endpoint}")
-                    self.logger.info(f"📦 Payload: {payload}")
-                    
-                    response = requests.post(
-                        endpoint,
-                        json=payload,
-                        headers=headers,
-                        timeout=10  # Reduced timeout to prevent Telegram duplicates
-                    )
-                    
-                    self.logger.info(f"📊 Status: {response.status_code}")
-                    self.logger.info(f"📋 Response headers: {dict(response.headers)}")
-                    
-                    if response.status_code == 200:
-                        result = response.json()
-                        self.logger.info(f"✅ Success! Full response: {result}")
-                        
-                        # Try to extract text from different response formats
-                        if isinstance(result, dict):
-                            if 'data' in result and isinstance(result['data'], list):
-                                if result['data']:
-                                    extracted = result['data'][0]
-                                    self.logger.info(f"📄 Extracted from 'data': {extracted}")
-                                    return str(extracted)
-                            elif 'output' in result:
-                                self.logger.info(f"📄 Extracted from 'output': {result['output']}")
-                                return str(result['output'])
-                            elif 'generated_text' in result:
-                                self.logger.info(f"📄 Extracted from 'generated_text': {result['generated_text']}")
-                                return result['generated_text']
-                            elif 'response' in result:
-                                self.logger.info(f"📄 Extracted from 'response': {result['response']}")
-                                return result['response']
-                        elif isinstance(result, list) and result:
-                            self.logger.info(f"📄 Extracted from list: {result[0]}")
-                            return str(result[0])
-                        elif isinstance(result, str):
-                            self.logger.info(f"📄 Direct string response: {result}")
-                            return result
-                            
-                        self.logger.info(f"📄 Fallback - converting to string: {result}")
-                        return str(result)
-                    else:
-                        response_text = response.text[:500]
-                        self.logger.warning(f"❌ Failed: {response.status_code} - {response_text}")
-                        
-                except requests.exceptions.RequestException as e:
-                    self.logger.error(f"🚨 Request error for {endpoint}: {str(e)}")
-                    continue
-                except Exception as e:
-                    self.logger.error(f"🚨 Unexpected error: {str(e)}")
-                    continue
-        
-        # Emergency fallback with contextual responses
-        self.logger.warning("🆘 All API attempts failed, using emergency fallback")
+        # If all API attempts fail, use intelligent fallback
+        return self._get_contextual_fallback(user_message)
+    
+    def _get_contextual_fallback(self, user_message):
+        """Get contextual fallback response when HF API is unavailable"""
+        self.logger.warning("🆘 Using contextual fallback response")
         
         # Simple contextual responses based on message content
         message_lower = user_message.lower()
@@ -245,7 +182,7 @@ def send_typing_action(chat_id):
 # Flask webhook endpoint
 @app.route(f'/{BOT_TOKEN}', methods=['POST'])
 def webhook():
-    """Handle incoming webhooks from Telegram - SIMPLE VERSION"""
+    """Handle incoming webhooks from Telegram - OPTIMIZED VERSION"""
     try:
         json_data = request.get_json(force=True)
         logger.info(f"📨 Received webhook data: {json_data}")
@@ -291,7 +228,7 @@ Having issues? The bot is constantly being improved!"""
                         # Send typing indicator
                         send_typing_action(chat_id)
                         
-                        # Get AI response
+                        # Get AI response (now with optimized timeouts)
                         ai_response = colin_bot.call_huggingface_api(user_message)
                         logger.info(f"🤖 Colin's response: {ai_response}")
                         
@@ -314,7 +251,7 @@ def index():
     return jsonify({
         "status": "active",
         "bot": "ColinBot",
-        "version": "3.0-SIMPLE",
+        "version": "3.1-OPTIMIZED",
         "hf_space": HF_SPACE_URL
     })
 
@@ -351,7 +288,7 @@ def setup_webhook():
         return False
 
 if __name__ == '__main__':
-    logger.info(f"🤖 Starting ColinBot SIMPLE VERSION")
+    logger.info(f"🤖 Starting ColinBot OPTIMIZED VERSION")
     logger.info(f"🌐 HF Space: {HF_SPACE_URL}")
     logger.info(f"🔗 Webhook URL: {WEBHOOK_URL}")
     
@@ -363,3 +300,6 @@ if __name__ == '__main__':
         app.run(host='0.0.0.0', port=PORT, debug=False)
     else:
         logger.error("❌ No WEBHOOK_URL provided - cannot run in webhook mode")
+
+# REBUILD TRIGGER 2025-08-13
+# Version 3.1 - Optimized webhook with fast HF API calls

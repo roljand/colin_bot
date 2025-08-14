@@ -1,3 +1,4 @@
+print("DEBUG: Starting imports")
 import os
 import logging
 import asyncio
@@ -6,24 +7,37 @@ from flask import Flask, request, jsonify
 import requests
 from telegram import Bot, Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
+print("DEBUG: Imports finished")
 
 # Configure logging
+print("DEBUG: Configuring logging")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+print("DEBUG: Logging configured")
 
 # Configuration
+print("DEBUG: Reading env vars")
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 WEBHOOK_URL = os.getenv('RAILWAY_STATIC_URL', os.getenv('RENDER_EXTERNAL_URL', ''))
 PORT = int(os.getenv('PORT', 8080))
 HF_SPACE_URL = "https://huggingface.co/spaces/Roljand/Colin_English_Bot"
 HF_API_TOKEN = os.getenv('HF_TOKEN', '')
+print("DEBUG: Env vars read")
+print(f"DEBUG: BOT_TOKEN is set: {BOT_TOKEN is not None}")
+print(f"DEBUG: WEBHOOK_URL is: {WEBHOOK_URL}")
+
 
 # Initialize Flask app
+print("DEBUG: Initializing Flask app")
 app = Flask(__name__)
+print("DEBUG: Flask app initialized")
 
 # Global application instance
+print("DEBUG: Initializing application variable")
 application = None
+print("DEBUG: Application variable initialized")
 
+print("DEBUG: Defining ColinBot class")
 class ColinBot:
     def __init__(self):
         self.hf_space_url = HF_SPACE_URL

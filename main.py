@@ -40,9 +40,11 @@ print("DEBUG: Application variable initialized")
 print("DEBUG: Defining ColinBot class")
 class ColinBot:
     def __init__(self):
+        print("DEBUG: ColinBot __init__ started")
         self.hf_space_url = HF_SPACE_URL
         self.hf_api_token = HF_API_TOKEN
         self.logger = logging.getLogger(__name__)
+        print("DEBUG: ColinBot __init__ finished")
         
     def call_huggingface_api(self, user_message):
         """Call HuggingFace Space API with extensive debugging - SYNCHRONOUS VERSION"""
@@ -142,9 +144,12 @@ class ColinBot:
             return "Goodbye! Have a great day! 👋"
         else:
             return f"I hear you saying: '{user_message}'. I'm currently having trouble connecting to my full AI capabilities, but I'm working on fixing this issue!"
+print("DEBUG: ColinBot class defined")
 
 # Initialize bot instance
+print("DEBUG: Initializing colin_bot instance")
 colin_bot = ColinBot()
+print("DEBUG: colin_bot instance initialized")
 
 async def start_command(update: Update, context):
     """Handle /start command"""

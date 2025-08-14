@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 WEBHOOK_URL = os.getenv('RAILWAY_STATIC_URL', os.getenv('RENDER_EXTERNAL_URL', ''))
 PORT = int(os.getenv('PORT', 8080))
-HF_SPACE_URL = "https://roljand-colin-bot.hf.space"
+HF_SPACE_URL = "https://huggingface.co/spaces/Roljand/Colin_English_Bot"
 HF_API_TOKEN = os.getenv('HF_TOKEN', '')
 
 # Initialize Flask app

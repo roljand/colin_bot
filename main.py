@@ -16,6 +16,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("RAILWAY_STATIC_URL")
 HF_SPACE_URL = "https://huggingface.co/spaces/Roljand/Colin_English_Bot"
 HF_API_TOKEN = os.getenv("HF_TOKEN")
+ASYNCIO_LOOP = None
 
 # --- Bot Logic ---
 def get_ai_response(user_message: str) -> str:
@@ -48,46 +49,43 @@ async def handle_message(update: Update, context) -> None:
     await update.message.reply_text(ai_response)
 
 # --- Web App and Bot Initialization ---
-# Initialize the bot application first
 application = Application.builder().token(BOT_TOKEN).build()
 application.add_handler(CommandHandler("start", start_command))
 application.add_handler(CommandHandler("help", help_command))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-# Initialize Flask app
 app = Flask(__name__)
 
 @app.route("/")
 def index():
-    """A simple health check endpoint."""
     return jsonify({"status": "active", "bot": "ColinBot"})
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
     """Handles incoming Telegram updates by running the async function in the existing loop."""
     update = Update.de_json(request.get_json(force=True), application.bot)
-    # Get the running event loop and create a task. This is the correct way to bridge sync and async.
-    loop = asyncio.get_running_loop()
-    loop.create_task(application.process_update(update))
+    # Use run_coroutine_threadsafe to schedule the async function from this sync thread
+    asyncio.run_coroutine_threadsafe(application.process_update(update), ASYNCIO_LOOP)
     return jsonify({"status": "ok"})
 
 # --- Main Execution ---
 def main() -> None:
     """Sets up the webhook and prepares the application to be run by Gunicorn."""
+    global ASYNCIO_LOOP
     if not WEBHOOK_URL:
         logger.error("RAILWAY_STATIC_URL environment variable not set!")
         return
 
-    # The application and its handlers are already configured. We just need to run initialize().
-    # We also need to get a running event loop to schedule our async calls on.
+    # Get the asyncio event loop
     try:
-        loop = asyncio.get_running_loop()
+        ASYNCIO_LOOP = asyncio.get_running_loop()
     except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        ASYNCIO_LOOP = asyncio.new_event_loop()
+        asyncio.set_event_loop(ASYNCIO_LOOP)
 
-    loop.run_until_complete(application.initialize())
-    loop.run_until_complete(application.bot.set_webhook(url=f"https://{WEBHOOK_URL}/webhook"))
+    # Initialize the bot and set the webhook
+    ASYNCIO_LOOP.run_until_complete(application.initialize())
+    ASYNCIO_LOOP.run_until_complete(application.bot.set_webhook(url=f"https://{WEBHOOK_URL}/webhook"))
     logger.info(f"Webhook set up at https://{WEBHOOK_URL}/webhook")
 
 # This block runs once when the application starts on Railway

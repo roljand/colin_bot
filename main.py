@@ -63,10 +63,12 @@ def index():
     return jsonify({"status": "active", "bot": "ColinBot"})
 
 @app.route("/webhook", methods=["POST"])
-async def webhook():
-    """Handles incoming Telegram updates."""
+def webhook():
+    """Handles incoming Telegram updates by running the async function in the existing loop."""
     update = Update.de_json(request.get_json(force=True), application.bot)
-    await application.process_update(update)
+    # Get the running event loop and create a task. This is the correct way to bridge sync and async.
+    loop = asyncio.get_running_loop()
+    loop.create_task(application.process_update(update))
     return jsonify({"status": "ok"})
 
 # --- Main Execution ---
@@ -76,8 +78,14 @@ def main() -> None:
         logger.error("RAILWAY_STATIC_URL environment variable not set!")
         return
 
-    loop = asyncio.get_event_loop()
-    # Initialize the bot and set the webhook
+    # The application and its handlers are already configured. We just need to run initialize().
+    # We also need to get a running event loop to schedule our async calls on.
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
     loop.run_until_complete(application.initialize())
     loop.run_until_complete(application.bot.set_webhook(url=f"https://{WEBHOOK_URL}/webhook"))
     logger.info(f"Webhook set up at https://{WEBHOOK_URL}/webhook")
